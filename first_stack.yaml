@@ -4,8 +4,8 @@ heat_template_version: 2013-05-23
 #                 DESCRIPTION                   #
 # # # # # # # # # # # # # # # # # # # # # # # # # 
 description: >
-  Simple template to deploy an example instance
-  (This description can go on several lines)
+  Heat template to deploy scalables nginx webservers
+  with an haproxy load balancer
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -17,41 +17,34 @@ parameters:
     type: string
     label: Key Name
     description: Name of key-pair to be used for compute instance
-  image_id:
+
+  image_id: # das sollte man vermeiden
     type: string
     label: Image ID - ubuntu-xenial-16.04_softwareconfig_0.0.2
     description: Image to be used for compute instance
     default: fbb3d9ed-615d-453c-9419-cf6165356384
+  
   instance_type:
     type: string
     label: Instance Type
     description: Type of instance (flavor) to be used
     default: gp1.small
+  
   availability_zone:
     type: string
     description: Name of the availability zone for the instance
     default: zone00
-  private_network:
-    type: string
-    label: Private network name or ID
-    description: Network to attach instance to.
-    default: my_network
+  
   public_net:
     type: string
     description: public network id
     default: public00
+  
   secgroup_id:
     type: string
     description : Id of the security groupe
     default: default
-  #subnet:
-    #type: string
-    #description: Subnet on which the load balancer will be located
-    #default: subnet
-    #constraints:
-    #- custom_constraint: neutron.subnet
-
-
+  
 # # # # # # # # # # # # # # # # # # # # # # # # # 
 #                 RESOURCES                     #
 # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -61,6 +54,7 @@ resources:
     type: OS::Neutron::Net
     properties:
       name: my_network
+  
   private_subnet:
     type: OS::Neutron::Subnet
     properties:
@@ -68,16 +62,19 @@ resources:
       network_id: { get_resource: private_net }
       cidr: 192.168.0.0/24
       gateway_ip: 192.168.0.1
+  
   router1:
     type: OS::Neutron::Router
     properties:
       external_gateway_info:
         network: { get_param: public_net }
+  
   router1_interface:
     type: OS::Neutron::RouterInterface
     properties:
       router_id: { get_resource: router1 }
       subnet_id: { get_resource: private_subnet }
+  
   nginx_1_port:
     type: OS::Neutron::Port
     properties:
@@ -85,11 +82,18 @@ resources:
       security_groups: [ get_param: secgroup_id ]
       fixed_ips:
         - subnet_id: { get_resource: private_subnet }
+  
   #nginx_1_floating_ip:
     #type: OS::Neutron::FloatingIP
     #properties:
-      #floating_network_id: { get_param: public_net }
-      #port_id: { get_resource: nginx_1_port }
+      #floating_network: { get_param: public_net }
+  
+  #float_ip_ass:
+    #type: OS::Neutron::FloatingIPAssociation
+    #properties:
+      #floatingip_id: { get_resource: nginx_1_floating_ip }
+      #port_id: { get_resource: nginx_1_port } 
+  
   nginx1:
     type: OS::Nova::Server
     properties:
@@ -144,16 +148,17 @@ resources:
 
           params:
             $server: nginx
-            $ip: server1
+            $ip: server1    
+  
   pool_member1:
     type: OS::Neutron::LBaaS::PoolMember
     #depends_on: nginx1
     properties:
       pool: { get_resource: pool }
       address: { get_attr: [nginx1, first_address] }
-      protocol_port: 8080
-      #subnet: { get_param: subnet }
-      subnet: { get_attr: [ private_subnet, name ] }
+      protocol_port: 80
+      subnet: { get_resource: private_subnet }
+  
   nginx_2_port:
     type: OS::Neutron::Port
     properties:
@@ -161,11 +166,7 @@ resources:
       security_groups: [ get_param: secgroup_id ]
       fixed_ips:
         - subnet_id: { get_resource: private_subnet }
-  nginx_2_floating_ip:
-    type: OS::Neutron::FloatingIP
-    properties:
-      floating_network_id: { get_param: public_net }
-      port_id: { get_resource: nginx_2_port }
+  
   nginx2:
     type: OS::Nova::Server
     properties:
@@ -220,45 +221,60 @@ resources:
           params:
             $server: nginx
             $ip: server2
+  
   pool_member2:
   #depends_on: nginx2
     type: OS::Neutron::LBaaS::PoolMember
     properties:
       pool: { get_resource: pool }
       address: { get_attr: [nginx2, first_address] }
-      protocol_port: 8080
-      #subnet: { get_param: subnet }
-      subnet: { get_attr: [ private_subnet, name ] }
-  lbaas_port:
-    type: OS::Neutron::Port
+      protocol_port: 80
+      subnet: { get_resource: private_subnet } 
+  
+  lbaas:
+    type: OS::Neutron::LBaaS::LoadBalancer
     properties:
-      network_id: { get_resource: private_net }
-      security_groups: [ get_param: secgroup_id ]
-      fixed_ips:
-        - subnet_id: { get_resource: private_subnet }
-  lb_vip_floating_ip:
-    type: OS::Neutron::FloatingIP
-    properties:
-      floating_network_id: { get_param: public_net }
-      port_id: { get_resource: lbaas_port }          
+      name: NginxLbaaS
+      vip_subnet: { get_resource: private_subnet }
+  
   listener:
     type: OS::Neutron::LBaaS::Listener
     properties:
       loadbalancer: { get_resource: lbaas }
       protocol: HTTP
-      protocol_port: 80
+      protocol_port: 80          
+  
   pool:
     type: OS::Neutron::LBaaS::Pool
     properties:
       name: lb_front_pool
       protocol: HTTP
       lb_algorithm: ROUND_ROBIN
-      listener: { get_resource: listener }
-  lbaas:
-    type: OS::Neutron::LBaaS::LoadBalancer
+      listener: { get_resource: listener }      
+  
+  lbaas_port:
+    type: OS::Neutron::Port
     properties:
-      name: NginxLbaaS
-      vip_subnet: { get_attr: [ private_subnet, name ] }
+      network: { get_resource: private_net }
+      device_id: { get_resource: lbaas }  
+      security_groups: [ get_param: secgroup_id ]
+      fixed_ips:
+        - subnet_id: { get_attr: [ lbaas, vip_subnet_id ] }
+  
+  lbaas_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: public_net }
+      port_id: { get_attr: [ lbaas, vip_port_id ] }
+      #fixed_ip_address: { get_attr: [ lbaas, vip_address ] }
+    depends_on:
+      - lbaas
+  
+  lb_ip_assoc:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: lbaas_floating_ip }
+      port_id: { get_attr: [ lbaas, vip_port_id ] } 
   
   #monitor:
 
@@ -270,12 +286,8 @@ outputs:
   instance_ip1:
     description: The IP address of the deployed instance
     value: { get_attr: [nginx1, first_address] }
+  
   instance_ip2:
     description: The IP address of the deployed instance
     value: { get_attr: [nginx2, first_address] }
-  lbaas_port_id:
-    description: LbaaS
-    value: { get_attr: [lbaas, vip_port_id ] }
-  pr_net:
-    description: private subnet  
-    value: { get_attr: [ private_subnet, name ] }
+  #add lbaas floating ip
