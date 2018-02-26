@@ -6,3 +6,5 @@ sleep 3
 
 sudo apt update
 sudo apt upgrade
+
+echo "System is now up to date"
