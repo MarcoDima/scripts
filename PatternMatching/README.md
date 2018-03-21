@@ -1,7 +1,7 @@
 # PatternMatching
-<p>Algoritmi di pattern matching</p> <br>
+<p>-- Algoritmi di pattern matching --</p> <br>
 <i><p>Implementazione LCS in Java</p></i>
 
-Copyright by "Dima" 
+Copyright by "MarcoDima" 
 With help of Fabri " The Fibra" Zirelli
 
